@@ -4,7 +4,7 @@
   "description": "ACP-compatible adapter bridging OpenCode to any ACP client (OpenClaw, acpx, Zed, etc.)",
   "type": "module",
   "bin": {
-    "opencode-acp": "./dist/index.js"
+    "opencode-acp-adapter": "./dist/index.js"
   },
   "main": "dist/index.js",
   "files": ["dist/", "README.md", "LICENSE", "package.json"],

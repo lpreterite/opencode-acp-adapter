@@ -48,12 +48,12 @@ opencode-acp/
 
 ```json
 {
-  "name": "opencode-acp",
+  "name": "opencode-acp-adapter",
   "version": "0.2.0",
   "description": "ACP-compatible adapter bridging OpenCode to any ACP client (OpenClaw, Zed, etc.)",
   "type": "module",
   "bin": {
-    "opencode-acp": "./dist/index.js"
+    "opencode-acp-adapter": "./dist/index.js"
   },
   "main": "dist/index.js",
   "files": ["dist/", "README.md", "LICENSE", "package.json"],
@@ -630,7 +630,7 @@ npm run build        # 编译
 
 # 链接到全局
 npm link
-opencode-acp         # 测试适配器
+opencode-acp-adapter         # 测试适配器
 ```
 
 ---

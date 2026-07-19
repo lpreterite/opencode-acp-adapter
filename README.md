@@ -37,7 +37,7 @@ npm link
 ### 启动适配器
 
 ```bash
-opencode-acp
+opencode-acp-adapter
 ```
 
 适配器通过 stdio 与 ACP 客户端通信，所有日志输出到 stderr，stdout 保持纯净用于 JSON-RPC 消息。
@@ -52,7 +52,7 @@ opencode-acp
 ### 与 acpx 配合使用
 
 ```bash
-acpx --agent opencode-acp
+acpx --agent opencode-acp-adapter
 ```
 
 ## 开发
