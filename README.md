@@ -30,39 +30,41 @@ OpenCode 编码引擎
 
   如果不想启动子进程，可通过 `OPENCODE_URL` 环境变量连接已有的 OpenCode 服务器。
 
-## 安装
-
-```bash
-npm install -g opencode-acp-adapter
-```
-
-或者从源码构建：
+## 从源码构建
 
 ```bash
 git clone https://github.com/lpreterite/opencode-acp-adapter.git
 cd opencode-acp-adapter
 npm install
 npm run build
-npm link
 ```
+
+构建产物在 `dist/` 目录，可直接运行 `node dist/index.js`。
 
 ## 使用
 
 ### 启动适配器
 
-```bash
-opencode-acp-adapter
-```
-
 适配器通过 stdio 与 ACP 客户端通信，所有日志输出到 stderr，stdout 保持纯净用于 JSON-RPC 消息。
+
+```bash
+# 方式一：opencode 在 PATH 中（默认）
+opencode-acp-adapter
+
+# 方式二：指定 opencode 二进制路径
+OPENCODE_BIN=/path/to/opencode opencode-acp-adapter
+
+# 方式三：连接已有 OpenCode 服务器（跳过子进程启动）
+OPENCODE_URL=http://127.0.0.1:8080 opencode-acp-adapter
+```
 
 ### 环境变量
 
-| 变量 | 说明 |
-|---|---|
-| `OPENCODE_URL` | 直接连接已有 OpenCode 服务器，跳过子进程启动 |
-| `OPENCODE_BIN` | 指定 opencode 二进制路径（默认从 PATH 查找） |
-| `OPENCODE` | 设为 `1` 启用 OpenCode 兼容模式 |
+| 变量 | 必要性 | 说明 |
+|------|--------|------|
+| `OPENCODE_URL` | 可选 | 设置后跳过子进程启动，直接连接已有 OpenCode 服务器 |
+| `OPENCODE_BIN` | 可选 | 当 `opencode` 不在 PATH 中时，指定二进制路径 |
+| `OPENCODE` | 通常无需手动设置 | 适配器内部自动设置，用于 OpenCode 兼容模式 |
 
 ### 与 acpx 配合使用
 
