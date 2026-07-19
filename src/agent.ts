@@ -1,5 +1,6 @@
 import { agent, methods } from "@agentclientprotocol/sdk";
 import type { AgentContext, Stream } from "@agentclientprotocol/sdk";
+import type { AgentApp } from "@agentclientprotocol/sdk";
 import { v7 as uuidv7 } from "uuid";
 import { AddressInfo } from "node:net";
 import { type Server } from "node:http";
@@ -204,143 +205,148 @@ async function createOcSession(
   });
 }
 
-export async function runAgent(stream: Stream) {
+export function createAgentApp(): AgentApp {
   const sessions = new Map<string, AcpSession>();
   const sessionStore = createSessionStore();
 
-  agent({ name: "opencode-acp" })
-    .onRequest(methods.agent.initialize, async () => {
-      return {
-        protocolVersion: 1,
-        agentCapabilities: {
-          loadSession: true,
-          sessionCapabilities: {
-            resume: {},
-            close: {},
-            list: {},
-          },
-          promptCapabilities: { image: true, embeddedContext: true },
+  const app = agent({ name: "opencode-acp" });
+
+  app.onRequest(methods.agent.initialize, async () => {
+    return {
+      protocolVersion: 1,
+      agentCapabilities: {
+        loadSession: true,
+        sessionCapabilities: {
+          resume: {},
+          close: {},
+          list: {},
         },
-        authMethods: [],
-      };
-    })
+        promptCapabilities: { image: true, embeddedContext: true },
+      },
+      authMethods: [],
+    };
+  });
 
-    .onRequest(methods.agent.authenticate, async () => {
-      return {};
-    })
+  app.onRequest(methods.agent.authenticate, async () => {
+    return {};
+  });
 
-    .onRequest(methods.agent.session.new, async (ctx) => {
-      const { cwd } = ctx.params;
-      const acpSessionId = uuidv7();
+  app.onRequest(methods.agent.session.new, async (ctx) => {
+    const { cwd } = ctx.params;
+    const acpSessionId = uuidv7();
 
-      await createOcSession(acpSessionId, ctx.client, cwd || process.cwd(), sessions);
+    await createOcSession(acpSessionId, ctx.client, cwd || process.cwd(), sessions);
 
-      await sessionStore.save({
-        sessionId: acpSessionId,
-        cwd: cwd || process.cwd(),
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+    await sessionStore.save({
+      sessionId: acpSessionId,
+      cwd: cwd || process.cwd(),
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    return { sessionId: acpSessionId };
+  });
+
+  app.onRequest(methods.agent.session.load, async (ctx) => {
+    const { sessionId, cwd } = ctx.params;
+    const record = await sessionStore.load(sessionId);
+    if (!record) throw new Error(`Session ${sessionId} not found`);
+
+    for (const msg of record.messages) {
+      const updateType = msg.role === "user" ? "user_message_chunk" : "agent_message_chunk";
+      await ctx.client.notify(methods.client.session.update, {
+        sessionId,
+        update: { sessionUpdate: updateType, content: { type: "text", text: msg.content } },
       });
+    }
 
-      return { sessionId: acpSessionId };
-    })
+    await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions);
 
-    .onRequest(methods.agent.session.load, async (ctx) => {
-      const { sessionId, cwd } = ctx.params;
-      const record = await sessionStore.load(sessionId);
-      if (!record) throw new Error(`Session ${sessionId} not found`);
+    return {};
+  });
 
-      for (const msg of record.messages) {
-        const updateType = msg.role === "user" ? "user_message_chunk" : "agent_message_chunk";
-        await ctx.client.notify(methods.client.session.update, {
-          sessionId,
-          update: { sessionUpdate: updateType, content: { type: "text", text: msg.content } },
-        });
-      }
+  app.onRequest(methods.agent.session.resume, async (ctx) => {
+    const { sessionId, cwd } = ctx.params;
+    const record = await sessionStore.load(sessionId);
+    if (!record) throw new Error(`Session ${sessionId} not found`);
 
-      await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions);
+    await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions);
 
-      return {};
-    })
+    return {};
+  });
 
-    .onRequest(methods.agent.session.resume, async (ctx) => {
-      const { sessionId, cwd } = ctx.params;
-      const record = await sessionStore.load(sessionId);
-      if (!record) throw new Error(`Session ${sessionId} not found`);
+  app.onRequest(methods.agent.session.close, async (ctx) => {
+    const { sessionId } = ctx.params;
+    const session = sessions.get(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
 
-      await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions);
+    session.subscription.close();
+    await session.oc.server.stop();
+    session.mcpServer.close();
+    sessions.delete(sessionId);
 
-      return {};
-    })
+    return {};
+  });
 
-    .onRequest(methods.agent.session.close, async (ctx) => {
-      const { sessionId } = ctx.params;
-      const session = sessions.get(sessionId);
-      if (!session) throw new Error(`Session ${sessionId} not found`);
+  app.onRequest(methods.agent.session.list, async () => {
+    const records = await sessionStore.list();
+    return {
+      sessions: records.map((r) => ({
+        sessionId: r.sessionId,
+        cwd: r.cwd,
+        createdAt: r.createdAt,
+        messageCount: r.messages.length,
+      })),
+    };
+  });
 
-      session.subscription.close();
-      await session.oc.server.stop();
-      session.mcpServer.close();
-      sessions.delete(sessionId);
+  app.onRequest(methods.agent.session.setMode, async () => {
+    return {};
+  });
 
-      return {};
-    })
+  app.onRequest(methods.agent.session.setConfigOption, async () => {
+    return { configOptions: [] };
+  });
 
-    .onRequest(methods.agent.session.list, async () => {
-      const records = await sessionStore.list();
-      return {
-        sessions: records.map((r) => ({
-          sessionId: r.sessionId,
-          cwd: r.cwd,
-          createdAt: r.createdAt,
-          messageCount: r.messages.length,
-        })),
-      };
-    })
+  app.onRequest(methods.agent.session.prompt, async (ctx) => {
+    const session = sessions.get(ctx.params.sessionId);
+    if (!session) throw new Error("Session not found");
+    session.cancelled = false;
 
-    .onRequest(methods.agent.session.setMode, async () => {
-      return {};
-    })
+    const parts = promptToOpenCodeParts(ctx.params.prompt);
+    const res = await sendPrompt(session.oc.server.url, session.oc.sessionId, { parts });
+    session.activeMessageId = res.info.id;
 
-    .onRequest(methods.agent.session.setConfigOption, async () => {
-      return { configOptions: [] };
-    })
-
-    .onRequest(methods.agent.session.prompt, async (ctx) => {
-      const session = sessions.get(ctx.params.sessionId);
-      if (!session) throw new Error("Session not found");
-      session.cancelled = false;
-
-      const parts = promptToOpenCodeParts(ctx.params.prompt);
-      const res = await sendPrompt(session.oc.server.url, session.oc.sessionId, { parts });
-      session.activeMessageId = res.info.id;
-
-      const start = Date.now();
-      while (true) {
-        if (session.cancelled) return { stopReason: "cancelled" };
-        try {
-          const info = await fetch(
-            `${session.oc.server.url}/session/${session.oc.sessionId}/message/${session.activeMessageId}`,
-          ).then((r) => r.json());
-          if (info?.time?.completed) {
-            session.activeMessageId = undefined;
-            return { stopReason: "end_turn" };
-          }
-        } catch {}
-        await new Promise((r) => setTimeout(r, 150));
-        if (Date.now() - start > 10 * 60 * 1000) return { stopReason: "refusal" };
-      }
-    })
-
-    .onNotification(methods.agent.session.cancel, async (ctx) => {
-      const session = sessions.get(ctx.params.sessionId);
-      if (!session) return;
-      session.cancelled = true;
+    const start = Date.now();
+    while (true) {
+      if (session.cancelled) return { stopReason: "cancelled" };
       try {
-        await abortSession(session.oc.server.url, session.oc.sessionId);
+        const info = await fetch(
+          `${session.oc.server.url}/session/${session.oc.sessionId}/message/${session.activeMessageId}`,
+        ).then((r) => r.json());
+        if (info?.time?.completed) {
+          session.activeMessageId = undefined;
+          return { stopReason: "end_turn" };
+        }
       } catch {}
-    })
+      await new Promise((r) => setTimeout(r, 150));
+      if (Date.now() - start > 10 * 60 * 1000) return { stopReason: "refusal" };
+    }
+  });
 
-    .connect(stream);
+  app.onNotification(methods.agent.session.cancel, async (ctx) => {
+    const session = sessions.get(ctx.params.sessionId);
+    if (!session) return;
+    session.cancelled = true;
+    try {
+      await abortSession(session.oc.server.url, session.oc.sessionId);
+    } catch {}
+  });
+
+  return app;
+}
+
+export async function runAgent(stream: Stream) {
+  createAgentApp().connect(stream);
 }
