@@ -4,6 +4,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { type Server } from "node:http";
 import * as diff from "diff";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
 
 export const SYSTEM_REMINDER = `
 
@@ -20,6 +22,60 @@ export type McpAgentBridge = {
     release: () => Promise<void>;
   }>;
 };
+
+function simpleGlobMatch(input: string, pattern: string): boolean {
+  const parts = pattern.split("/");
+  const inputParts = input.split("/");
+
+  let pi = 0;
+  let ii = 0;
+  let backtrackP = -1;
+  let backtrackI = -1;
+
+  while (ii < inputParts.length) {
+    if (pi < parts.length && (parts[pi] === "**" || simpleMatch(inputParts[ii], parts[pi]))) {
+      if (parts[pi] === "**") {
+        backtrackP = pi;
+        backtrackI = ii;
+        pi++;
+        if (pi >= parts.length) return true;
+        continue;
+      }
+      pi++;
+      ii++;
+    } else if (backtrackP !== -1) {
+      pi = backtrackP + 1;
+      ii = ++backtrackI;
+    } else {
+      return false;
+    }
+  }
+
+  while (pi < parts.length && parts[pi] === "**") pi++;
+  return pi >= parts.length;
+}
+
+function simpleMatch(input: string, pattern: string): boolean {
+  let pi = 0;
+  let ii = 0;
+  while (ii < input.length) {
+    if (pi < pattern.length && pattern[pi] === "*") {
+      if (pi === pattern.length - 1) return true;
+      const next = pattern[pi + 1];
+      const idx = input.indexOf(next, ii);
+      if (idx === -1) return false;
+      ii = idx;
+      pi++;
+    } else if (pi < pattern.length && (pattern[pi] === "?" || pattern[pi] === input[ii])) {
+      pi++;
+      ii++;
+    } else {
+      return false;
+    }
+  }
+  while (pi < pattern.length && pattern[pi] === "*") pi++;
+  return pi >= pattern.length;
+}
 
 export function createMcpServer(
   agent: McpAgentBridge,
@@ -126,6 +182,40 @@ export function createMcpServer(
       const patch = diff.createPatch(input.file_path, content, newContent);
       await agent.writeTextFile({ sessionId, path: input.file_path, content: newContent });
       return { content: [{ type: "text", text: patch }] };
+    },
+  );
+
+  server.registerTool(
+    "glob",
+    {
+      title: "Glob",
+      description: "Lists files in a directory, optionally matching a glob pattern.",
+      inputSchema: {
+        path: z.string().describe("Absolute path to the directory to search"),
+        pattern: z.string().optional().describe("Glob pattern to filter files (e.g. *.ts, **/*.json, src/**)"),
+      },
+      annotations: {
+        title: "List files",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        idempotentHint: false,
+      },
+    },
+    async (input) => {
+      try {
+        const entries: string[] = [];
+        const dirEntries = await readdir(input.path, { recursive: true, withFileTypes: true });
+        for (const entry of dirEntries) {
+          const relative = path.relative(input.path, path.join(entry.parentPath, entry.name));
+          if (!input.pattern || simpleGlobMatch(relative, input.pattern)) {
+            entries.push(entry.isDirectory() ? `${relative}/` : relative);
+          }
+        }
+        return { content: [{ type: "text", text: entries.length > 0 ? entries.join("\n") : "No files found" }] };
+      } catch (error: any) {
+        return { content: [{ type: "text", text: `Glob failed: ${error.message}` }] };
+      }
     },
   );
 

@@ -4,6 +4,7 @@ import type { AgentApp } from "@agentclientprotocol/sdk";
 import { v7 as uuidv7 } from "uuid";
 import { AddressInfo } from "node:net";
 import { type Server } from "node:http";
+import { readFile, writeFile } from "node:fs/promises";
 import { createMcpServer } from "./mcp-server.js";
 import {
   abortSession,
@@ -154,13 +155,28 @@ function handleOpenCodeEvent(
   }
 }
 
-function createMcpBridge(client: AgentContext) {
+export function createMcpBridge(client: AgentContext) {
   return {
     readTextFile: async (params: { sessionId: string; path: string; line?: number; limit?: number }) => {
-      return client.request(methods.client.fs.readTextFile, params) as Promise<{ content: string }>;
+      try {
+        return await client.request(methods.client.fs.readTextFile, params) as { content: string };
+      } catch {
+        const content = await readFile(params.path, "utf-8");
+        if (params.line !== undefined || params.limit !== undefined) {
+          const lines = content.split("\n");
+          const start = params.line || 0;
+          const end = params.limit ? start + params.limit : undefined;
+          return { content: lines.slice(start, end).join("\n") };
+        }
+        return { content };
+      }
     },
     writeTextFile: async (params: { sessionId: string; path: string; content: string }) => {
-      await client.request(methods.client.fs.writeTextFile, params);
+      try {
+        await client.request(methods.client.fs.writeTextFile, params);
+      } catch {
+        await writeFile(params.path, params.content, "utf-8");
+      }
     },
     createTerminal: async (params: { command: string; sessionId: string; outputByteLimit?: number }): Promise<McpTerminalHandle> => {
       const handle = await client.request(methods.client.terminal.create, params) as any;
@@ -187,7 +203,7 @@ async function createOcSession(
   const ocServer = await startOpenCodeServer({
     cwd,
     configContent: {
-      tools: { read: false, write: false, edit: false, multiedit: false, bash: false, patch: false },
+      tools: { read: true, write: true, edit: true, multiedit: true, bash: true, patch: true },
       mcp: { acp: { type: "remote", url: mcpUrl } },
     },
   });

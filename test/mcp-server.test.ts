@@ -1,6 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createMcpServer, type McpAgentBridge } from "../src/mcp-server.js";
 import { type Server } from "node:http";
+import { readdir } from "node:fs/promises";
+
+vi.mock("node:fs/promises", () => ({
+  readdir: vi.fn(),
+}));
 
 function createMockBridge(): McpAgentBridge {
   return {
@@ -234,5 +239,74 @@ describe("createMcpServer", () => {
     const text = response.result?.content?.[0]?.text || "";
     expect(text).toContain("read failed");
     server.close();
+  });
+
+  describe("glob tool", () => {
+    function createMockDirent(name: string, parentPath: string, isDir: boolean) {
+      return { name, parentPath, isDirectory: () => isDir };
+    }
+
+    it("should register glob tool by default (no capabilities required)", async () => {
+      const bridge = createMockBridge();
+      const server = await createMcpServer(bridge, "sess-1");
+
+      const { response } = await mcpRequest(server, {
+        jsonrpc: "2.0",
+        method: "tools/list",
+        id: 1,
+      });
+
+      const toolNames = response.result.tools.map((t: any) => t.name);
+      expect(toolNames).toContain("glob");
+      server.close();
+    });
+
+    it("should list files with glob tool", async () => {
+      vi.mocked(readdir).mockResolvedValue([
+        createMockDirent("a.ts", "/test", false) as any,
+        createMockDirent("b.ts", "/test", false) as any,
+        createMockDirent("sub", "/test", true) as any,
+      ]);
+
+      const bridge = createMockBridge();
+      const server = await createMcpServer(bridge, "sess-1");
+
+      const { response } = await mcpRequest(server, {
+        jsonrpc: "2.0",
+        method: "tools/call",
+        id: 2,
+        params: {
+          name: "glob",
+          arguments: { path: "/test" },
+        },
+      });
+
+      const text = response.result?.content?.[0]?.text || "";
+      expect(text).toContain("a.ts");
+      expect(text).toContain("b.ts");
+      expect(text).toContain("sub/");
+      server.close();
+    });
+
+    it("should return error for non-existent path", async () => {
+      vi.mocked(readdir).mockRejectedValue(new Error("ENOENT: no such file or directory"));
+
+      const bridge = createMockBridge();
+      const server = await createMcpServer(bridge, "sess-1");
+
+      const { response } = await mcpRequest(server, {
+        jsonrpc: "2.0",
+        method: "tools/call",
+        id: 3,
+        params: {
+          name: "glob",
+          arguments: { path: "/nonexistent" },
+        },
+      });
+
+      const text = response.result?.content?.[0]?.text || "";
+      expect(text).toContain("Glob failed");
+      server.close();
+    });
   });
 });
