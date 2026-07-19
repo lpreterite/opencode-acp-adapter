@@ -299,4 +299,32 @@ describe("createAgentApp", () => {
       await conn.agent.notify(methods.agent.session.cancel, { sessionId: "nonexistent" });
     });
   });
+
+  describe("full lifecycle", () => {
+    it("should complete initialize → session/new → session/prompt → session/close", async () => {
+      await conn.agent.request(methods.agent.initialize, initParams);
+
+      const session = await conn.agent.request(methods.agent.session.new, newSessionParams);
+      expect(typeof session.sessionId).toBe("string");
+
+      vi.useFakeTimers();
+      const mockFetch = vi.fn().mockResolvedValue({
+        json: () => Promise.resolve({ time: { completed: new Date().toISOString() } }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const promptPromise = conn.agent.request(methods.agent.session.prompt, {
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      });
+      await vi.advanceTimersByTimeAsync(200);
+      const prompt = await promptPromise;
+      expect(prompt.stopReason).toBe("end_turn");
+
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+
+      await conn.agent.request(methods.agent.session.close, { sessionId: session.sessionId });
+    });
+  });
 });
