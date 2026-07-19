@@ -25,6 +25,7 @@ export function createMcpServer(
   agent: McpAgentBridge,
   sessionId: string,
   clientCapabilities?: { fs?: { readTextFile?: boolean; writeTextFile?: boolean }; terminal?: boolean },
+  mcpServers?: any[],
 ): Promise<Server> {
   const server = new McpServer({ name: "acp-mcp-server", version: "1.0.0" });
 

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { once } from "node:events";
 
 export type OpenCodeServer = {
@@ -24,6 +25,17 @@ export async function startOpenCodeServer(opts: {
   }
 
   const bin = opts.opencodeBin || process.env.OPENCODE_BIN || "opencode";
+
+  try {
+    accessSync(bin, constants.X_OK);
+  } catch {
+    throw new Error(
+      `OpenCode binary not found: "${bin}". ` +
+      `Ensure opencode is installed and available in PATH, or set OPENCODE_BIN env var to specify the path. ` +
+      `See https://opencode.ai for installation instructions.`,
+    );
+  }
+
   const args = ["serve", "--hostname", opts.hostname || "127.0.0.1", "--port", String(opts.port ?? 0)];
 
   const env = {

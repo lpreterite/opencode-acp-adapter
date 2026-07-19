@@ -178,8 +178,9 @@ async function createOcSession(
   client: AgentContext,
   cwd: string,
   sessions: Map<string, AcpSession>,
+  mcpServers?: any[],
 ) {
-  const mcpServer = await createMcpServer(createMcpBridge(client), acpSessionId, undefined);
+  const mcpServer = await createMcpServer(createMcpBridge(client), acpSessionId, undefined, mcpServers);
   const mcpAddress = mcpServer.address() as AddressInfo;
   const mcpUrl = `http://127.0.0.1:${mcpAddress.port}/mcp`;
 
@@ -232,10 +233,10 @@ export function createAgentApp(): AgentApp {
   });
 
   app.onRequest(methods.agent.session.new, async (ctx) => {
-    const { cwd } = ctx.params;
+    const { cwd, mcpServers } = ctx.params;
     const acpSessionId = uuidv7();
 
-    await createOcSession(acpSessionId, ctx.client, cwd || process.cwd(), sessions);
+    await createOcSession(acpSessionId, ctx.client, cwd || process.cwd(), sessions, mcpServers);
 
     await sessionStore.save({
       sessionId: acpSessionId,
@@ -249,7 +250,7 @@ export function createAgentApp(): AgentApp {
   });
 
   app.onRequest(methods.agent.session.load, async (ctx) => {
-    const { sessionId, cwd } = ctx.params;
+    const { sessionId, cwd, mcpServers } = ctx.params;
     const record = await sessionStore.load(sessionId);
     if (!record) throw new Error(`Session ${sessionId} not found`);
 
@@ -261,17 +262,17 @@ export function createAgentApp(): AgentApp {
       });
     }
 
-    await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions);
+    await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions, mcpServers);
 
     return {};
   });
 
   app.onRequest(methods.agent.session.resume, async (ctx) => {
-    const { sessionId, cwd } = ctx.params;
+    const { sessionId, cwd, mcpServers } = ctx.params;
     const record = await sessionStore.load(sessionId);
     if (!record) throw new Error(`Session ${sessionId} not found`);
 
-    await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions);
+    await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions, mcpServers);
 
     return {};
   });

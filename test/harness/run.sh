@@ -42,4 +42,21 @@ kill $MOCK_PID 2>/dev/null
 wait $MOCK_PID 2>/dev/null || true
 rm -f "$MARKER_FILE"
 
-exit $HARNESS_EXIT
+echo "=== Acpx integration test ==="
+echo ""
+bash "$SCRIPT_DIR/acpx-harness.sh"
+ACPX_EXIT=$?
+echo ""
+echo "acpx test exit code: $ACPX_EXIT"
+
+echo ""
+echo "=== Overall ==="
+if [ "$HARNESS_EXIT" -eq 0 ] && [ "$ACPX_EXIT" -eq 0 ]; then
+  echo "All harness tests passed"
+  exit 0
+else
+  echo "Some harness tests failed"
+  [ "$HARNESS_EXIT" -ne 0 ] && echo "  - SDK harness failed"
+  [ "$ACPX_EXIT" -ne 0 ] && echo "  - acpx harness failed"
+  exit 1
+fi

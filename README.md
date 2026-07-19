@@ -16,6 +16,20 @@ opencode-acp-adapter
 OpenCode 编码引擎
 ```
 
+## 前置依赖
+
+- **Node.js** >= 18
+- **[OpenCode](https://opencode.ai)** 编码引擎（运行时依赖）
+
+  适配器通过子进程启动 OpenCode 服务。请确保 `opencode` 命令在 PATH 中可用，或通过 `OPENCODE_BIN` 环境变量指定路径。
+
+  ```bash
+  # 安装 OpenCode（参考官方文档）
+  curl -fsSL https://opencode.ai/install.sh | sh
+  ```
+
+  如果不想启动子进程，可通过 `OPENCODE_URL` 环境变量连接已有的 OpenCode 服务器。
+
 ## 安装
 
 ```bash
@@ -48,6 +62,7 @@ opencode-acp-adapter
 |---|---|
 | `OPENCODE_URL` | 直接连接已有 OpenCode 服务器，跳过子进程启动 |
 | `OPENCODE_BIN` | 指定 opencode 二进制路径（默认从 PATH 查找） |
+| `OPENCODE` | 设为 `1` 启用 OpenCode 兼容模式 |
 
 ### 与 acpx 配合使用
 
