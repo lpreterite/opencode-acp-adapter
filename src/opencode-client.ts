@@ -147,6 +147,28 @@ export async function sendPrompt(
   });
 }
 
+export type ModelInfo = {
+  providerID: string;
+  modelID: string;
+  name: string;
+};
+
+export async function getModels(baseUrl: string): Promise<{ models: ModelInfo[]; defaultModel: string }> {
+  const config = await httpJson<any>(`${baseUrl}/config/providers`);
+  const models: ModelInfo[] = [];
+  for (const provider of config.providers || []) {
+    for (const m of Object.values(provider.models || {}) as any[]) {
+      models.push({
+        providerID: provider.id,
+        modelID: m.id,
+        name: m.name || m.id,
+      });
+    }
+  }
+  const defaultModel = models.length > 0 ? `${models[0].providerID}/${models[0].modelID}` : "";
+  return { models, defaultModel };
+}
+
 export async function abortSession(baseUrl: string, sessionId: string): Promise<boolean> {
   return httpJson(`${baseUrl}/session/${sessionId}/abort`, { method: "POST" });
 }

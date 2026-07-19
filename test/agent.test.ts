@@ -19,6 +19,10 @@ let sseCallback: ((event: any) => void) | null = null;
 vi.mock("../src/opencode-client.js", () => ({
   startOpenCodeServer: vi.fn().mockResolvedValue({ url: "http://localhost:9999", stop: vi.fn() }),
   createSession: vi.fn().mockResolvedValue({ id: "test-oc-session-id" }),
+  getModels: vi.fn().mockResolvedValue({
+    models: [{ providerID: "test", modelID: "test-model", name: "Test Model" }],
+    defaultModel: "test/test-model",
+  }),
   sseSubscribe: vi.fn().mockImplementation((_url: string, cb: (event: any) => void) => {
     sseCallback = cb;
     return { close: vi.fn() };
@@ -161,6 +165,16 @@ describe("createAgentApp", () => {
       await conn.agent.request(methods.agent.session.new, newSessionParams);
       expect(mockStore.save).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/test" }));
     });
+
+    it("should return configOptions with model", async () => {
+      await conn.agent.request(methods.agent.initialize, initParams);
+      const res = await conn.agent.request(methods.agent.session.new, newSessionParams);
+      expect(res.configOptions).toHaveLength(1);
+      expect(res.configOptions[0].id).toBe("model");
+      expect(res.configOptions[0].category).toBe("model");
+      expect(res.configOptions[0].options).toHaveLength(1);
+      expect(res.configOptions[0].options[0].value).toBe("test/test-model");
+    });
   });
 
   describe("session/load", () => {
@@ -276,14 +290,16 @@ describe("createAgentApp", () => {
   });
 
   describe("session/set_config_option", () => {
-    it("should return empty configOptions", async () => {
+    it("should return model configOptions", async () => {
       await conn.agent.request(methods.agent.initialize, initParams);
       const res = await conn.agent.request(methods.agent.session.setConfigOption, {
         sessionId: "test",
-        configId: "some.config",
-        value: "some-value",
+        configId: "model",
+        value: "test/test-model",
       });
-      expect(res).toEqual({ configOptions: [] });
+      expect(res.configOptions).toHaveLength(1);
+      expect(res.configOptions[0].id).toBe("model");
+      expect(res.configOptions[0].category).toBe("model");
     });
   });
 

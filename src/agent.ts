@@ -10,9 +10,11 @@ import { createMcpServer } from "./mcp-server.js";
 import {
   abortSession,
   createSession,
+  getModels,
   sseSubscribe,
   startOpenCodeServer,
   sendPrompt,
+  type ModelInfo,
   type OpenCodeEvent,
   type OpenCodeServer,
   type PromptPart,
@@ -39,6 +41,7 @@ type AcpSession = {
   subscription: { close: () => void };
   pendingPrompt: { resolve: (result: { stopReason: StopReason }) => void; reject: (err: any) => void } | null;
   lastEventAt: number;
+  selectedModel?: { providerID: string; modelID: string };
 };
 
 export function promptToOpenCodeParts(prompt: any[]): PromptPart[] {
@@ -202,6 +205,17 @@ export function createMcpBridge(client: AgentContext) {
   };
 }
 
+let cachedModels: ModelInfo[] | null = null;
+let cachedDefaultModel = "";
+
+async function ensureModels(baseUrl: string): Promise<{ models: ModelInfo[]; defaultModel: string }> {
+  if (cachedModels) return { models: cachedModels, defaultModel: cachedDefaultModel };
+  const result = await getModels(baseUrl);
+  cachedModels = result.models;
+  cachedDefaultModel = result.defaultModel;
+  return result;
+}
+
 async function createOcSession(
   acpSessionId: string,
   client: AgentContext,
@@ -224,6 +238,8 @@ async function createOcSession(
   const ocSession = await createSession(ocServer.url);
   const sub = sseSubscribe(ocServer.url, (evt) => handleOpenCodeEvent(sessions, acpSessionId, evt));
 
+  const { defaultModel } = await ensureModels(ocServer.url);
+
   sessions.set(acpSessionId, {
     id: acpSessionId,
     oc: { server: ocServer, sessionId: ocSession.id },
@@ -234,7 +250,28 @@ async function createOcSession(
     subscription: sub,
     pendingPrompt: null,
     lastEventAt: 0,
+    selectedModel: defaultModel ? parseModelRef(defaultModel) : undefined,
   });
+}
+
+function parseModelRef(ref: string): { providerID: string; modelID: string } {
+  const parts = ref.split("/");
+  return { providerID: parts[0], modelID: parts.slice(1).join("/") };
+}
+
+function buildConfigOptions() {
+  if (!cachedModels || cachedModels.length === 0) return [];
+  return [{
+    id: "model",
+    name: "Model",
+    category: "model" as const,
+    type: "select" as const,
+    currentValue: cachedDefaultModel,
+    options: cachedModels.map((m) => ({
+      value: `${m.providerID}/${m.modelID}`,
+      name: m.name,
+    })),
+  }];
 }
 
 export function createAgentApp(): AgentApp {
@@ -277,7 +314,7 @@ export function createAgentApp(): AgentApp {
       updatedAt: new Date().toISOString(),
     });
 
-    return { sessionId: acpSessionId };
+    return { sessionId: acpSessionId, configOptions: buildConfigOptions() };
   });
 
   app.onRequest(methods.agent.session.load, async (ctx) => {
@@ -295,7 +332,7 @@ export function createAgentApp(): AgentApp {
 
     await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions, mcpServers);
 
-    return {};
+    return { configOptions: buildConfigOptions() };
   });
 
   app.onRequest(methods.agent.session.resume, async (ctx) => {
@@ -305,7 +342,7 @@ export function createAgentApp(): AgentApp {
 
     await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions, mcpServers);
 
-    return {};
+    return { configOptions: buildConfigOptions() };
   });
 
   app.onRequest(methods.agent.session.close, async (ctx) => {
@@ -337,8 +374,15 @@ export function createAgentApp(): AgentApp {
     return {};
   });
 
-  app.onRequest(methods.agent.session.setConfigOption, async () => {
-    return { configOptions: [] };
+  app.onRequest(methods.agent.session.setConfigOption, async (ctx) => {
+    const { sessionId, configId, value } = ctx.params;
+    if (configId === "model" && typeof value === "string") {
+      const session = sessions.get(sessionId);
+      if (session) {
+        session.selectedModel = parseModelRef(value);
+      }
+    }
+    return { configOptions: buildConfigOptions() };
   });
 
   app.onRequest(methods.agent.session.prompt, async (ctx) => {
@@ -348,11 +392,13 @@ export function createAgentApp(): AgentApp {
 
     const parts = promptToOpenCodeParts(ctx.params.prompt);
 
+    const model = session.selectedModel;
+
     const result = await new Promise<{ stopReason: StopReason }>((resolve, reject) => {
       session.pendingPrompt = { resolve, reject };
       session.lastEventAt = Date.now();
 
-      sendPrompt(session.oc.server.url, session.oc.sessionId, { parts }).then((res) => {
+      sendPrompt(session.oc.server.url, session.oc.sessionId, { parts, model }).then((res) => {
         session.activeMessageId = res.info.id;
       }).catch((err) => {
         const pp = session.pendingPrompt;
