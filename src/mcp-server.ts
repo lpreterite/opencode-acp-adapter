@@ -163,7 +163,6 @@ export function createMcpServer(
   }
 
   const app = express();
-  app.use(express.json());
 
   app.post("/mcp", async (req: Request, res: Response) => {
     try {
@@ -172,10 +171,9 @@ export function createMcpServer(
       });
       res.on("close", () => {
         transport.close();
-        server.close();
       });
       await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await transport.handleRequest(req, res);
     } catch (error) {
       if (!res.headersSent) {
         res.status(500).json({
