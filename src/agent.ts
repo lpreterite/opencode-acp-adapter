@@ -36,7 +36,7 @@ type AcpSession = {
   subscription: { close: () => void };
 };
 
-function promptToOpenCodeParts(prompt: any[]): PromptPart[] {
+export function promptToOpenCodeParts(prompt: any[]): PromptPart[] {
   const parts: PromptPart[] = [];
   for (const chunk of prompt) {
     switch (chunk.type) {
@@ -64,7 +64,7 @@ function promptToOpenCodeParts(prompt: any[]): PromptPart[] {
   return parts;
 }
 
-function partToAcpNotifications(
+export function partToAcpNotifications(
   part: any,
   acpSessionId: string,
   partSeen: Record<string, number>,
