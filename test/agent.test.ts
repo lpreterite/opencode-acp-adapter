@@ -14,10 +14,15 @@ const mockStore = vi.hoisted(() => ({
   appendMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
+let sseCallback: ((event: any) => void) | null = null;
+
 vi.mock("../src/opencode-client.js", () => ({
   startOpenCodeServer: vi.fn().mockResolvedValue({ url: "http://localhost:9999", stop: vi.fn() }),
   createSession: vi.fn().mockResolvedValue({ id: "test-oc-session-id" }),
-  sseSubscribe: vi.fn().mockReturnValue({ close: vi.fn() }),
+  sseSubscribe: vi.fn().mockImplementation((_url: string, cb: (event: any) => void) => {
+    sseCallback = cb;
+    return { close: vi.fn() };
+  }),
   sendPrompt: vi.fn().mockResolvedValue({ info: { id: "msg-1" }, parts: [] }),
   abortSession: vi.fn().mockResolvedValue(true),
 }));
@@ -65,6 +70,7 @@ describe("createAgentApp", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    sseCallback = null;
     mockStore.load.mockResolvedValue(null as any);
     mockStore.save.mockResolvedValue(undefined);
     mockStore.list.mockResolvedValue([]);
@@ -298,6 +304,80 @@ describe("createAgentApp", () => {
       await conn.agent.request(methods.agent.initialize, initParams);
       await conn.agent.notify(methods.agent.session.cancel, { sessionId: "nonexistent" });
     });
+
+    it("should cancel an active prompt", async () => {
+      await conn.agent.request(methods.agent.initialize, initParams);
+      const session = await conn.agent.request(methods.agent.session.new, newSessionParams);
+
+      vi.useFakeTimers();
+
+      const promptPromise = conn.agent.request(methods.agent.session.prompt, {
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      await conn.agent.notify(methods.agent.session.cancel, { sessionId: session.sessionId });
+
+      const prompt = await promptPromise;
+      expect(prompt.stopReason).toBe("cancelled");
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe("session/prompt silent timeout", () => {
+    it("should return refusal when no SSE events arrive for 10 minutes", async () => {
+      await conn.agent.request(methods.agent.initialize, initParams);
+      const session = await conn.agent.request(methods.agent.session.new, newSessionParams);
+
+      vi.useFakeTimers();
+
+      const promptPromise = conn.agent.request(methods.agent.session.prompt, {
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(sseCallback).toBeTruthy();
+      sseCallback!({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "reasoning",
+            text: "thinking...",
+            id: "prt-think-1",
+            sessionID: "test-oc-session-id",
+            messageID: "msg-1",
+          },
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+
+      expect(sseCallback).toBeTruthy();
+      sseCallback!({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "text",
+            text: "still working...",
+            id: "prt-text-1",
+            sessionID: "test-oc-session-id",
+            messageID: "msg-1",
+          },
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 1000);
+
+      const prompt = await promptPromise;
+      expect(prompt.stopReason).toBe("refusal");
+
+      vi.useRealTimers();
+    });
   });
 
   describe("full lifecycle", () => {
@@ -308,21 +388,32 @@ describe("createAgentApp", () => {
       expect(typeof session.sessionId).toBe("string");
 
       vi.useFakeTimers();
-      const mockFetch = vi.fn().mockResolvedValue({
-        json: () => Promise.resolve({ time: { completed: new Date().toISOString() } }),
-      });
-      vi.stubGlobal("fetch", mockFetch);
 
       const promptPromise = conn.agent.request(methods.agent.session.prompt, {
         sessionId: session.sessionId,
         prompt: [{ type: "text", text: "hello" }],
       });
-      await vi.advanceTimersByTimeAsync(200);
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(sseCallback).toBeTruthy();
+      sseCallback!({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "step-finish",
+            reason: "stop",
+            id: "prt-finish-1",
+            sessionID: "test-oc-session-id",
+            messageID: "msg-1",
+          },
+        },
+      });
+
       const prompt = await promptPromise;
       expect(prompt.stopReason).toBe("end_turn");
 
       vi.useRealTimers();
-      vi.unstubAllGlobals();
 
       await conn.agent.request(methods.agent.session.close, { sessionId: session.sessionId });
     });

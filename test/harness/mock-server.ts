@@ -4,6 +4,13 @@ import { writeFileSync } from "node:fs";
 const SESSIONS = new Map<string, { id: string; messages: any[]; completed: boolean }>();
 const SSE_CLIENTS = new Set<any>();
 
+function broadcastSSE(data: object) {
+  const msg = `data: ${JSON.stringify(data)}\n\n`;
+  for (const client of SSE_CLIENTS) {
+    client.write(msg);
+  }
+}
+
 const server = createServer((req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
@@ -30,6 +37,18 @@ const server = createServer((req, res) => {
         session?.messages.push({ id, ...msg });
         setTimeout(() => {
           if (session) session.completed = true;
+          broadcastSSE({
+            type: "message.part.updated",
+            properties: {
+              part: {
+                type: "step-finish",
+                reason: "stop",
+                id: `prt-finish-${id}`,
+                sessionID: sessionId,
+                messageID: id,
+              },
+            },
+          });
         }, 200);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ info: { id }, parts: [] }));

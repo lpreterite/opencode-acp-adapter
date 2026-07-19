@@ -1,6 +1,7 @@
 import { agent, methods } from "@agentclientprotocol/sdk";
 import type { AgentContext, Stream } from "@agentclientprotocol/sdk";
 import type { AgentApp } from "@agentclientprotocol/sdk";
+import type { StopReason } from "@agentclientprotocol/sdk";
 import { v7 as uuidv7 } from "uuid";
 import { AddressInfo } from "node:net";
 import { type Server } from "node:http";
@@ -36,6 +37,8 @@ type AcpSession = {
   mcpServer: Server;
   client: AgentContext;
   subscription: { close: () => void };
+  pendingPrompt: { resolve: (result: { stopReason: StopReason }) => void; reject: (err: any) => void } | null;
+  lastEventAt: number;
 };
 
 export function promptToOpenCodeParts(prompt: any[]): PromptPart[] {
@@ -145,6 +148,16 @@ function handleOpenCodeEvent(
       if (!part || part.sessionID !== session.oc.sessionId) return;
       if (session.activeMessageId && part.messageID !== session.activeMessageId) return;
 
+      session.lastEventAt = Date.now();
+
+      if (part.type === "step-finish" && part.reason === "stop") {
+        session.activeMessageId = undefined;
+        const pp = session.pendingPrompt;
+        session.pendingPrompt = null;
+        if (pp) pp.resolve({ stopReason: "end_turn" });
+        return;
+      }
+
       const notifications = partToAcpNotifications(part, acpSessionId, session.partSeen);
       for (const n of notifications) {
         session.client.notify(methods.client.session.update, n);
@@ -219,6 +232,8 @@ async function createOcSession(
     mcpServer,
     client,
     subscription: sub,
+    pendingPrompt: null,
+    lastEventAt: 0,
   });
 }
 
@@ -332,30 +347,49 @@ export function createAgentApp(): AgentApp {
     session.cancelled = false;
 
     const parts = promptToOpenCodeParts(ctx.params.prompt);
-    const res = await sendPrompt(session.oc.server.url, session.oc.sessionId, { parts });
-    session.activeMessageId = res.info.id;
 
-    const start = Date.now();
-    while (true) {
-      if (session.cancelled) return { stopReason: "cancelled" };
-      try {
-        const info = await fetch(
-          `${session.oc.server.url}/session/${session.oc.sessionId}/message/${session.activeMessageId}`,
-        ).then((r) => r.json());
-        if (info?.time?.completed) {
-          session.activeMessageId = undefined;
-          return { stopReason: "end_turn" };
+    const result = await new Promise<{ stopReason: StopReason }>((resolve, reject) => {
+      session.pendingPrompt = { resolve, reject };
+      session.lastEventAt = Date.now();
+
+      sendPrompt(session.oc.server.url, session.oc.sessionId, { parts }).then((res) => {
+        session.activeMessageId = res.info.id;
+      }).catch((err) => {
+        const pp = session.pendingPrompt;
+        session.pendingPrompt = null;
+        if (pp) pp.reject(err);
+      });
+
+      const SILENT_TIMEOUT = 10 * 60 * 1000;
+      (async () => {
+        while (session.pendingPrompt) {
+          await new Promise((r) => setTimeout(r, 1000));
+          if (session.cancelled) {
+            const pp = session.pendingPrompt;
+            session.pendingPrompt = null;
+            if (pp) pp.resolve({ stopReason: "cancelled" });
+            return;
+          }
+          if (Date.now() - session.lastEventAt > SILENT_TIMEOUT) {
+            const pp = session.pendingPrompt;
+            session.pendingPrompt = null;
+            if (pp) pp.resolve({ stopReason: "refusal" });
+            return;
+          }
         }
-      } catch {}
-      await new Promise((r) => setTimeout(r, 150));
-      if (Date.now() - start > 10 * 60 * 1000) return { stopReason: "refusal" };
-    }
+      })();
+    });
+
+    return result;
   });
 
   app.onNotification(methods.agent.session.cancel, async (ctx) => {
     const session = sessions.get(ctx.params.sessionId);
     if (!session) return;
     session.cancelled = true;
+    const pp = session.pendingPrompt;
+    session.pendingPrompt = null;
+    if (pp) pp.resolve({ stopReason: "cancelled" });
     try {
       await abortSession(session.oc.server.url, session.oc.sessionId);
     } catch {}
