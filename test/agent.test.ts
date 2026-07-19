@@ -23,6 +23,10 @@ vi.mock("../src/opencode-client.js", () => ({
     models: [{ providerID: "test", modelID: "test-model", name: "Test Model" }],
     defaultModel: "test/test-model",
   }),
+  getModelsFromCli: vi.fn().mockResolvedValue({
+    models: [{ providerID: "test", modelID: "test-model", name: "Test Model" }],
+    defaultModel: "test/test-model",
+  }),
   sseSubscribe: vi.fn().mockImplementation((_url: string, cb: (event: any) => void) => {
     sseCallback = cb;
     return { close: vi.fn() };
@@ -120,10 +124,13 @@ describe("createAgentApp", () => {
   });
 
   describe("authenticate", () => {
-    it("should return empty object", async () => {
+    it("should return models from getModelsFromCli", async () => {
       await conn.agent.request(methods.agent.initialize, initParams);
       const res = await conn.agent.request(methods.agent.authenticate, { methodId: "none" });
-      expect(res).toEqual({});
+      expect(res.models).toBeDefined();
+      expect(res.models.currentModelId).toBe("test/test-model");
+      expect(res.models.availableModels).toHaveLength(1);
+      expect(res.models.availableModels[0].modelId).toBe("test/test-model");
     });
   });
 

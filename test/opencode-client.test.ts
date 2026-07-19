@@ -8,6 +8,7 @@ import {
   abortSession,
   sseSubscribe,
   startOpenCodeServer,
+  getModelsFromCli,
 } from "../src/opencode-client.js";
 
 async function createTestServer(
@@ -175,6 +176,14 @@ describe("sseSubscribe", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(events.length).toBe(countAfterClose);
     await server.close();
+  });
+});
+
+describe("getModelsFromCli", () => {
+  it("should throw when opencode binary fails", async () => {
+    await expect(
+      getModelsFromCli({ opencodeBin: "/nonexistent/bin" }),
+    ).rejects.toThrow();
   });
 });
 

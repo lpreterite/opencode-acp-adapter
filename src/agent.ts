@@ -11,6 +11,7 @@ import {
   abortSession,
   createSession,
   getModels,
+  getModelsFromCli,
   sseSubscribe,
   startOpenCodeServer,
   sendPrompt,
@@ -297,7 +298,25 @@ export function createAgentApp(): AgentApp {
   });
 
   app.onRequest(methods.agent.authenticate, async () => {
-    return {};
+    if (!cachedModels) {
+      try {
+        const result = await getModelsFromCli();
+        cachedModels = result.models;
+        cachedDefaultModel = result.defaultModel;
+      } catch {
+        // CLI 获取失败，session/new 会通过 HTTP 重试
+      }
+    }
+    if (!cachedModels || cachedModels.length === 0) return {} as any;
+    return {
+      models: {
+        currentModelId: cachedDefaultModel,
+        availableModels: cachedModels.map((m) => ({
+          modelId: `${m.providerID}/${m.modelID}`,
+          name: m.name,
+        })),
+      },
+    } as any;
   });
 
   app.onRequest(methods.agent.session.new, async (ctx) => {

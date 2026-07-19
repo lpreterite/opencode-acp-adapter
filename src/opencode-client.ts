@@ -169,6 +169,71 @@ export async function getModels(baseUrl: string): Promise<{ models: ModelInfo[];
   return { models, defaultModel };
 }
 
+export async function getModelsFromCli(opts?: {
+  opencodeBin?: string;
+}): Promise<{ models: ModelInfo[]; defaultModel: string }> {
+  const bin = opts?.opencodeBin || process.env.OPENCODE_BIN || "opencode";
+  const args = ["models", "--verbose"];
+
+  const child = spawn(bin, args, {
+    env: { ...process.env, OPENCODE: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+  child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+
+  const code = await new Promise<number | null>((resolve) => {
+    child.on("close", resolve);
+    child.on("error", () => resolve(null));
+  });
+
+  if (code !== 0 || !stdout) {
+    throw new Error(`opencode models failed (exit=${code}): ${stderr.slice(0, 200)}`);
+  }
+
+  const models: ModelInfo[] = [];
+  const lines = stdout.split("\n");
+  let braceCount = 0;
+  let jsonLines: string[] = [];
+  let inJson = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!inJson && trimmed.startsWith("{")) {
+      inJson = true;
+      jsonLines = [line];
+      braceCount = 1;
+      continue;
+    }
+    if (inJson) {
+      jsonLines.push(line);
+      for (const ch of line) {
+        if (ch === "{") braceCount++;
+        if (ch === "}") braceCount--;
+      }
+      if (braceCount === 0) {
+        inJson = false;
+        try {
+          const obj = JSON.parse(jsonLines.join("\n"));
+          if (obj.providerID && obj.id) {
+            models.push({
+              providerID: obj.providerID,
+              modelID: obj.id,
+              name: obj.name || obj.id,
+            });
+          }
+        } catch {}
+      }
+    }
+  }
+
+  const defaultModel = models.length > 0 ? `${models[0].providerID}/${models[0].modelID}` : "";
+  return { models, defaultModel };
+}
+
 export async function abortSession(baseUrl: string, sessionId: string): Promise<boolean> {
   return httpJson(`${baseUrl}/session/${sessionId}/abort`, { method: "POST" });
 }
