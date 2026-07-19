@@ -55,7 +55,36 @@ opencode-acp-adapter
 acpx --agent opencode-acp-adapter
 ```
 
-## 开发
+## 测试
+
+### 单元测试
+
+```bash
+npm test
+```
+
+77 个测试，覆盖所有模块：
+
+| 文件 | 测试数 | 说明 |
+|---|---|---|
+| `test/utils.test.ts` | 9 | Pushable、sleep、unreachable、流转换 |
+| `test/session-store.test.ts` | 7 | 会话持久化 save/load/list/delete |
+| `test/agent-utils.test.ts` | 16 | prompt/part 事件转换 |
+| `test/agent.test.ts` | 25 | 所有 11 个 ACP handler + 完整生命周期 |
+| `test/opencode-client.test.ts` | 10 | HTTP 通信层 |
+| `test/mcp-server.test.ts` | 10 | MCP 工具注册与调用 |
+
+### Harness 测试（真实子进程通信）
+
+启动 mock OpenCode 服务器，通过 stdio 与适配器子进程通信，验证完整流程：
+
+```bash
+bash test/harness/run.sh
+```
+
+验证 5 个步骤：`initialize → session/new → session/prompt → session/list → session/close`。
+
+### 开发
 
 ```bash
 # 编译
@@ -69,6 +98,12 @@ npm run typecheck
 
 # 运行测试
 npm test
+
+# 测试监视模式
+npm run test:watch
+
+# 测试覆盖率
+npm run test:coverage
 ```
 
 ## 协议能力
