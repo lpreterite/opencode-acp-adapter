@@ -217,6 +217,26 @@ async function ensureModels(baseUrl: string): Promise<{ models: ModelInfo[]; def
   return result;
 }
 
+async function buildModelsResponse() {
+  if (!cachedModels || cachedModels.length === 0) {
+    try {
+      const result = await getModelsFromCli();
+      cachedModels = result.models;
+      cachedDefaultModel = result.defaultModel;
+    } catch {
+      return undefined;
+    }
+  }
+  if (!cachedModels || cachedModels.length === 0) return undefined;
+  return {
+    currentModelId: cachedDefaultModel,
+    availableModels: cachedModels.map((m) => ({
+      modelId: `${m.providerID}/${m.modelID}`,
+      name: m.name,
+    })),
+  };
+}
+
 async function createOcSession(
   acpSessionId: string,
   client: AgentContext,
@@ -333,7 +353,7 @@ export function createAgentApp(): AgentApp {
       updatedAt: new Date().toISOString(),
     });
 
-    return { sessionId: acpSessionId, configOptions: buildConfigOptions() };
+    return { sessionId: acpSessionId, configOptions: buildConfigOptions(), models: await buildModelsResponse() };
   });
 
   app.onRequest(methods.agent.session.load, async (ctx) => {
@@ -351,7 +371,7 @@ export function createAgentApp(): AgentApp {
 
     await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions, mcpServers);
 
-    return { configOptions: buildConfigOptions() };
+    return { configOptions: buildConfigOptions(), models: await buildModelsResponse() };
   });
 
   app.onRequest(methods.agent.session.resume, async (ctx) => {
@@ -361,7 +381,7 @@ export function createAgentApp(): AgentApp {
 
     await createOcSession(sessionId, ctx.client, cwd || record.cwd, sessions, mcpServers);
 
-    return { configOptions: buildConfigOptions() };
+    return { configOptions: buildConfigOptions(), models: await buildModelsResponse() };
   });
 
   app.onRequest(methods.agent.session.close, async (ctx) => {
@@ -408,6 +428,18 @@ export function createAgentApp(): AgentApp {
     const session = sessions.get(ctx.params.sessionId);
     if (!session) throw new Error("Session not found");
     session.cancelled = false;
+
+    const userText = ctx.params.prompt
+      .filter((p: any) => p.type === "text")
+      .map((p: any) => p.text)
+      .join("\n");
+    if (userText) {
+      sessionStore.appendMessage(ctx.params.sessionId, {
+        role: "user",
+        content: userText,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     const parts = promptToOpenCodeParts(ctx.params.prompt);
 
